@@ -2,51 +2,35 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
 using OtpNet;
 using QRCoder;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using MFAAuthApp.Models; // namespace-ul unde ai User, LoginRequest, VerifyRequest
+using MFAAuthApp.Models;
+using System.Security.Cryptography;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Adăugăm servicii
-builder.Services.AddEndpointsApiExplorer();
-
-// 🔵 Swagger configurat cu suport pentru JWT
-builder.Services.AddSwaggerGen(c =>
+builder.Services.AddCors(options =>
 {
-    c.SwaggerDoc("v1", new OpenApiInfo { Title = "MFAAuthApp", Version = "v1" });
-
-    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    options.AddDefaultPolicy(policy =>
     {
-        Name = "Authorization",
-        Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer",
-        BearerFormat = "JWT",
-        In = ParameterLocation.Header,
-        Description = "Introduceți token-ul JWT astfel: Bearer {token}"
-    });
-
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement
-    {
-        {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                }
-            },
-            Array.Empty<string>()
-        }
+        policy.WithOrigins("http://localhost:3000")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
     });
 });
 
-// 🔵 Configurare JWT
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+builder.Services.AddControllers().AddJsonOptions(options =>
+{
+    options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+});
+
 var key = Encoding.ASCII.GetBytes("super_secret_key_1234567890_super_secret_key!");
 
 builder.Services.AddAuthentication(options =>
@@ -56,7 +40,7 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
-    options.RequireHttpsMetadata = false; // true în producție
+    options.RequireHttpsMetadata = false;
     options.SaveToken = true;
     options.TokenValidationParameters = new TokenValidationParameters
     {
@@ -69,13 +53,11 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
-// 🔵 Configurăm baza de date SQLite
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite("Data Source=users.db"));
 
 var app = builder.Build();
 
-// Creează DB la pornire (dacă nu există)
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -89,92 +71,161 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
-// 🔵 Middleware pentru autentificare și autorizare
+app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Înregistrare utilizator
+string HashPassword(string password)
+{
+    using var sha256 = SHA256.Create();
+    var hashedBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(password));
+    return Convert.ToBase64String(hashedBytes);
+}
+
 app.MapPost("/register", async ([FromBody] LoginRequest request, AppDbContext db) =>
 {
-    if (await db.Users.AnyAsync(u => u.Username == request.Username))
-        return Results.BadRequest("Utilizatorul există deja.");
-
-    var user = new User
+    try
     {
-        Username = request.Username,
-        PasswordHash = request.Password // Atenție: în producție trebuie HASH!
-    };
+        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+            return Results.BadRequest("Username și parola sunt obligatorii.");
 
-    db.Users.Add(user);
-    await db.SaveChangesAsync();
+        if (await db.Users.AnyAsync(u => u.Username == request.Username))
+            return Results.BadRequest("Utilizatorul există deja.");
 
-    return Results.Ok("Utilizator înregistrat.");
-});
+        var user = new User
+        {
+            Username = request.Username,
+            PasswordHash = HashPassword(request.Password)
+        };
 
-// Login + generare secret + QR Code pentru MFA
-app.MapPost("/login", async ([FromBody] LoginRequest request, AppDbContext db) =>
-{
-    var user = await db.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
-    if (user == null || user.PasswordHash != request.Password)
-        return Results.Unauthorized();
-
-    if (user.TotpSecret == null)
-    {
-        var secret = KeyGeneration.GenerateRandomKey(20);
-        user.TotpSecret = secret;
+        db.Users.Add(user);
         await db.SaveChangesAsync();
 
-        var base32Secret = Base32Encoding.ToString(secret);
-        var otpUri = new OtpUri(OtpType.Totp, base32Secret, request.Username, "MFAAuthApp");
+        return Results.Ok(new { Message = "Utilizator înregistrat cu succes." });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Eroare la înregistrare: {ex.Message}");
+    }
+});
 
-        var qrGenerator = new QRCodeGenerator();
-        var qrData = qrGenerator.CreateQrCode(otpUri.ToString(), QRCodeGenerator.ECCLevel.Q);
-        var qrCode = new Base64QRCode(qrData).GetGraphic(20);
+app.MapPost("/login", async ([FromBody] LoginRequest request, AppDbContext db) =>
+{
+    try
+    {
+        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+            return Results.BadRequest("Username și parola sunt obligatorii.");
 
-        return Results.Ok(new
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
+        if (user == null || user.PasswordHash != HashPassword(request.Password))
+            return Results.Json(new { Message = "Date de autentificare invalide." }, statusCode: 401);
+
+        // Dacă utilizatorul nu are TOTP secret, îl generăm
+        if (user.TotpSecret == null)
         {
-            Message = "Scanează codul QR în Google Authenticator.",
-            Secret = base32Secret,
-            QrCodeImageBase64 = qrCode
+            var secret = KeyGeneration.GenerateRandomKey(20);
+            user.TotpSecret = secret;
+            await db.SaveChangesAsync();
+
+            var base32Secret = Base32Encoding.ToString(secret);
+            var otpUri = new OtpUri(OtpType.Totp, base32Secret, request.Username, "MFAApp");
+
+            var qrGenerator = new QRCodeGenerator();
+            var qrData = qrGenerator.CreateQrCode(otpUri.ToString(), QRCodeGenerator.ECCLevel.Q);
+            var qrCode = new Base64QRCode(qrData).GetGraphic(20);
+
+            return Results.Ok(new
+            {
+                Message = "Scanează codul QR în Google Authenticator.",
+                Secret = base32Secret,
+                QrCodeImageBase64 = qrCode,
+                RequiresMFA = true
+            });
+        }
+
+        return Results.Ok(new { 
+            Message = "TOTP deja activat. Introdu codul MFA.",
+            RequiresMFA = true
         });
     }
-
-    return Results.Ok(new { Message = "TOTP deja activat. Introdu codul din aplicație." });
+    catch (Exception ex)
+    {
+        return Results.Problem($"Eroare la login: {ex.Message}");
+    }
 });
 
-// Verificare cod TOTP + emitere JWT
 app.MapPost("/verify", async ([FromBody] VerifyRequest request, AppDbContext db) =>
 {
-    var user = await db.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
-    if (user == null || user.TotpSecret == null)
-        return Results.Unauthorized();
-
-    var totp = new Totp(user.TotpSecret);
-    var isValid = totp.VerifyTotp(request.Code, out _, new VerificationWindow(2, 2));
-
-    if (!isValid)
-        return Results.Unauthorized();
-
-    // Generare token JWT
-    var tokenHandler = new JwtSecurityTokenHandler();
-    var tokenDescriptor = new SecurityTokenDescriptor
+    try
     {
-        Subject = new ClaimsIdentity(new[]
-        {
-            new Claim(ClaimTypes.Name, user.Username)
-        }),
-        Expires = DateTime.UtcNow.AddHours(1),
-        SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
-    };
-    var token = tokenHandler.CreateToken(tokenDescriptor);
-    var jwt = tokenHandler.WriteToken(token);
+        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Code))
+            return Results.BadRequest("Username și codul MFA sunt obligatorii.");
 
-    return Results.Ok(new { Token = jwt });
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
+        if (user == null || user.TotpSecret == null)
+            return Results.Json(new { Message = "Utilizator sau secret TOTP invalid." }, statusCode: 401);
+
+        var totp = new Totp(user.TotpSecret);
+        var isValid = totp.VerifyTotp(request.Code, out _, new VerificationWindow(2, 2));
+
+        if (!isValid)
+            return Results.Json(new { Message = "Cod MFA invalid." }, statusCode: 401);
+
+        var tokenHandler = new JwtSecurityTokenHandler();
+        var tokenDescriptor = new SecurityTokenDescriptor
+        {
+            Subject = new ClaimsIdentity(new[] {
+                new Claim(ClaimTypes.Name, user.Username),
+                new Claim(ClaimTypes.NameIdentifier, user.Id.ToString())
+            }),
+            Expires = DateTime.UtcNow.AddHours(1),
+            SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
+        };
+        var token = tokenHandler.CreateToken(tokenDescriptor);
+        var jwt = tokenHandler.WriteToken(token);
+
+        return Results.Ok(new { 
+            Token = jwt,
+            Message = "Autentificare reușită!",
+            Username = user.Username
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Eroare la verificare: {ex.Message}");
+    }
 });
 
-// Endpoint protejat - necesită JWT
-app.MapGet("/protected", [Microsoft.AspNetCore.Authorization.Authorize]() =>
-    "Acces permis doar cu JWT!");
+app.MapGet("/protected", [Microsoft.AspNetCore.Authorization.Authorize]() => 
+{
+    return Results.Ok(new { Message = "Acces permis cu JWT!" });
+});
+
+app.MapPost("/reset-totp", async ([FromBody] LoginRequest request, AppDbContext db) =>
+{
+    try
+    {
+        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+            return Results.BadRequest("Username și parola sunt obligatorii.");
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
+        if (user == null || user.PasswordHash != HashPassword(request.Password))
+            return Results.Json(new { Message = "Date de autentificare invalide." }, statusCode: 401);
+
+        // resetează TOTP secret-ul
+        user.TotpSecret = null;
+        await db.SaveChangesAsync();
+
+        return Results.Ok(new { Message = "TOTP resetat cu succes. Acum te poți loga din nou pentru a genera un QR code nou." });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Eroare la resetare TOTP: {ex.Message}");
+    }
+});
+
+app.MapGet("/health", () => Results.Ok(new { Status = "Server is running", Time = DateTime.Now }));
+
+app.MapControllers();
 
 app.Run();
