@@ -226,6 +226,18 @@ const Login = () => {
                     type="button"
                     className={`toggle-btn ${!isRegistering ? 'active' : ''}`}
                     onClick={() => setIsRegistering(false)}
+                    style={{
+                      padding: '12px 24px',
+                      fontSize: '16px',
+                      fontWeight: '600',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      margin: '0 5px',
+                      backgroundColor: !isRegistering ? '#6366f1' : '#e5e7eb',
+                      color: !isRegistering ? 'white' : '#6b7280',
+                      transition: 'all 0.3s ease'
+                    }}
                   >
                     Login
                   </button>
@@ -233,6 +245,18 @@ const Login = () => {
                     type="button"
                     className={`toggle-btn ${isRegistering ? 'active' : ''}`}
                     onClick={() => setIsRegistering(true)}
+                    style={{
+                      padding: '12px 24px',
+                      fontSize: '16px',
+                      fontWeight: '600',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      margin: '0 5px',
+                      backgroundColor: isRegistering ? '#6366f1' : '#e5e7eb',
+                      color: isRegistering ? 'white' : '#6b7280',
+                      transition: 'all 0.3s ease'
+                    }}
                   >
                     Register
                   </button>
@@ -256,6 +280,19 @@ const Login = () => {
                     onChange={(e) => setUsername(e.target.value)}
                     required
                     disabled={isLoading}
+                    style={{
+                      width: '100%',
+                      padding: '16px 20px',
+                      fontSize: '16px',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '12px',
+                      marginBottom: '16px',
+                      backgroundColor: 'white',
+                      transition: 'all 0.3s ease',
+                      boxSizing: 'border-box'
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = '#6366f1'}
+                    onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
                   />
                   <input
                     type="password"
@@ -265,11 +302,39 @@ const Login = () => {
                     onChange={(e) => setPassword(e.target.value)}
                     required
                     disabled={isLoading}
+                    style={{
+                      width: '100%',
+                      padding: '16px 20px',
+                      fontSize: '16px',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '12px',
+                      marginBottom: '20px',
+                      backgroundColor: 'white',
+                      transition: 'all 0.3s ease',
+                      boxSizing: 'border-box'
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = '#6366f1'}
+                    onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
                   />
                   <button 
                     type="submit" 
                     className="auth-btn staff"
                     disabled={isLoading}
+                    style={{
+                      width: '100%',
+                      padding: '16px 20px',
+                      fontSize: '18px',
+                      fontWeight: '600',
+                      border: 'none',
+                      borderRadius: '12px',
+                      backgroundColor: '#8b5cf6',
+                      color: 'white',
+                      cursor: isLoading ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.3s ease',
+                      opacity: isLoading ? 0.7 : 1
+                    }}
+                    onMouseEnter={(e) => !isLoading && (e.target.style.backgroundColor = '#7c3aed')}
+                    onMouseLeave={(e) => !isLoading && (e.target.style.backgroundColor = '#8b5cf6')}
                   >
                     {isLoading ? 'Loading...' : (isRegistering ? 'Create Account' : 'Submit Login')}
                   </button>
@@ -308,12 +373,51 @@ const Login = () => {
                     onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     required
                     disabled={isLoading}
-                    style={{ textAlign: 'center', fontSize: '18px', letterSpacing: '2px' }}
+                    style={{ 
+                      width: '100%',
+                      padding: '16px 20px',
+                      fontSize: '20px',
+                      fontWeight: '600',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '12px',
+                      marginBottom: '20px',
+                      backgroundColor: 'white',
+                      transition: 'all 0.3s ease',
+                      boxSizing: 'border-box',
+                      textAlign: 'center',
+                      letterSpacing: '4px',
+                      fontFamily: 'monospace'
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = '#6366f1'}
+                    onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
                   />
                   <button 
                     type="submit" 
                     className="auth-btn staff"
                     disabled={isLoading || mfaCode.length !== 6}
+                    style={{
+                      width: '100%',
+                      padding: '16px 20px',
+                      fontSize: '18px',
+                      fontWeight: '600',
+                      border: 'none',
+                      borderRadius: '12px',
+                      backgroundColor: (isLoading || mfaCode.length !== 6) ? '#9ca3af' : '#8b5cf6',
+                      color: 'white',
+                      cursor: (isLoading || mfaCode.length !== 6) ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.3s ease',
+                      marginBottom: '12px'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isLoading && mfaCode.length === 6) {
+                        e.target.style.backgroundColor = '#7c3aed';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isLoading && mfaCode.length === 6) {
+                        e.target.style.backgroundColor = '#8b5cf6';
+                      }
+                    }}
                   >
                     {isLoading ? 'Verifying...' : 'Submit MFA Code'}
                   </button>
@@ -327,12 +431,24 @@ const Login = () => {
                     setQrCodeImage('');
                   }}
                   style={{
-                    background: 'none',
-                    border: '1px solid #ccc',
-                    padding: '8px 16px',
-                    marginTop: '10px',
+                    width: '100%',
+                    padding: '12px 16px',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    backgroundColor: 'transparent',
+                    border: '2px solid #d1d5db',
+                    borderRadius: '8px',
+                    color: '#6b7280',
                     cursor: 'pointer',
-                    borderRadius: '4px'
+                    transition: 'all 0.3s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.backgroundColor = '#f9fafb';
+                    e.target.style.borderColor = '#9ca3af';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.backgroundColor = 'transparent';
+                    e.target.style.borderColor = '#d1d5db';
                   }}
                 >
                   ← Back to Login
